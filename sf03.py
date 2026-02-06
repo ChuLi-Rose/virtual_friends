@@ -3,6 +3,7 @@ import os
 from openai import OpenAI
 from datetime import datetime
 import json
+import uuid
 
 print('-------------> 重新执行文件，渲染展示页面')
 
@@ -18,12 +19,19 @@ st.set_page_config(
 )
 
 
-def generate_session_name():  #生成会话标识
-    return datetime.now().strftime("%Y-%d-%m_%H-%M-%S")
+def generate_session_name():  # 生成会话标识
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def get_user_session_path(user_id, session_name):
+    """获取用户特定的会话文件路径"""
+    user_dir = f'sessions/{user_id}'
+    os.makedirs(user_dir, exist_ok=True)  # 确保用户目录存在
+    return f'{user_dir}/{session_name}.json'
 
 
 def save_session():  # 保存会话信息
-    if st.session_state.current_session:
+    if st.session_state.current_session and 'user_id' in st.session_state:
         # 构建新的会话对象
         session_data = {
             'name_nick': st.session_state.name_nick,
@@ -32,33 +40,36 @@ def save_session():  # 保存会话信息
             'current_session': st.session_state.current_session,
             'messages': st.session_state.messages
         }
-        # 如果 session 目录不存在，则创建
-        if not os.path.exists('sessions'):
-            os.mkdir('sessions')
+        # 获取用户特定的会话路径
+        session_file_path = get_user_session_path(st.session_state.user_id, st.session_state.current_session)
         # 保存会话数据
-        with open(f'sessions/{st.session_state.current_session}.json', 'w', encoding='utf-8') as f:
+        with open(session_file_path, 'w', encoding='utf-8') as f:
             json.dump(session_data, f, ensure_ascii=False, indent=4)
 
 
 # 加载会话列表信息
 def load_sessions():
     session_list = []
-    # 加载session目录下的所有会话文件
-    if os.path.exists('sessions'):
-        file_list = os.listdir('sessions')
-        for filename in file_list:
-            if filename.endswith('.json'):
-                session_list.append(filename[:-5])
+    # 只加载当前用户目录下的会话文件
+    if 'user_id' in st.session_state:
+        user_session_dir = f'sessions/{st.session_state.user_id}'
+        if os.path.exists(user_session_dir):
+            file_list = os.listdir(user_session_dir)
+            for filename in file_list:
+                if filename.endswith('.json'):
+                    session_list.append(filename[:-5])  # 移除.json扩展名
     session_list.sort(reverse=True)  # 降序排列
     return session_list
 
 
-#加载指定的会话记录
+# 加载指定的会话记录
 def load_session(session_name):
     try:
-        if os.path.exists(f'sessions/{session_name}.json'):
-            #读取会话数据
-            with open(f'sessions/{session_name}.json', 'r', encoding='utf-8') as f:
+        # 使用用户特定的路径
+        session_file_path = get_user_session_path(st.session_state.user_id, session_name)
+        if os.path.exists(session_file_path):
+            # 读取会话数据
+            with open(session_file_path, 'r', encoding='utf-8') as f:
                 session_data = json.load(f)
                 st.session_state.messages = session_data['messages']
                 st.session_state.name_nick = session_data['name_nick']
@@ -73,8 +84,10 @@ def load_session(session_name):
 # 删除会话信息的函数
 def delete_session(session_name):
     try:
-        if os.path.exists(f'sessions/{session_name}.json'):
-            os.remove(f'sessions/{session_name}.json')  # 删除文件
+        # 使用用户特定的路径
+        session_file_path = get_user_session_path(st.session_state.user_id, session_name)
+        if os.path.exists(session_file_path):
+            os.remove(session_file_path)  # 删除文件
             # 删除会话与当前会话一致，需生成新的会话
             if session_name == st.session_state.current_session:
                 st.session_state.messages = []
@@ -86,7 +99,7 @@ def delete_session(session_name):
 # 大标题
 st.title("虚拟恋人")
 
-#Logo
+# Logo
 st.logo('./car/91.jpg')
 
 # 系统提示词
@@ -97,11 +110,16 @@ system_prompt = """
                 2.匹配用户的语言
                 3.回复尽量简洁，类似于微信聊天
                 4.有需要可以使用表情包及颜文字，不要滥用
-                5.回复的内容，要充分体现伴侣的性格特点
+                5.回复的内容要能充分体现伴侣的性格特点
                 你的性格特点：
                     %s
                 在整个对话过程中，你必须严格遵守上述文字的规定
 """
+
+# 初始化用户ID 为每个用户创建唯一ID
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())
+
 # 初始化聊天信息
 if 'messages' not in st.session_state:
     st.session_state.messages = []
@@ -126,7 +144,7 @@ if 'current_session' not in st.session_state:
 
 # 展示聊天记录
 st.text(f'会话时间：{st.session_state.current_session}')
-for message in st.session_state.messages: # {"role": "user", "content": "prompt"}
+for message in st.session_state.messages:  # {"role": "user", "content": "prompt"}
     st.chat_message(message["role"]).write(message["content"])
 
 # 创建与AI大模型互动的客户端对象
@@ -202,7 +220,7 @@ if prompt: # 字符串会自动转化为布尔值，空为False，非空为True
     # print('-------------<大模型返回的结果',response.choices[0].message.content)
     # st.chat_message("assistant").write(response.choices[0].message.content)
 
-    #流式输出的解析方式
+    # 流式输出的解析方式
     response_message = st.empty() # 创建一个空的消息框
     full_response = ""
 
@@ -217,6 +235,7 @@ if prompt: # 字符串会自动转化为布尔值，空为False，非空为True
 
     # 即时保存会话信息
     save_session()
+
 
 
 
